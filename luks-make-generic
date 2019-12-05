@@ -1,0 +1,96 @@
+#!/bin/bash
+
+################################################################
+# This script automates the creation of a luks partition or volume
+# Edit this script to define the parameters
+# At the end, this script sources luks-make-run which does all the work
+# luks-make-run defines several functions described below
+#
+# To set up a luks volume, following functions are executed
+# (a summary of the actual bash command is given after each function)
+#
+# create_volfile:
+#     sudo dd # (creates volume file)
+#
+# do_losetup_on_volfile:
+#     sudo losetup # (setup loop device for volume file)
+#
+# set_passphrase:
+#     cryptsetup luksFormat # (Initialize/set passphrase)
+#
+# setup_mapping:
+#     cryptsetup luksOpen # (decrypt and set up mapping)
+#
+# make_filesystem: 
+#     sudo losetup # (loop device for luks mapper)
+#     sudo mkfs.ext4 # (create file system)
+#     sudo e2label  # (create file system label)
+#
+# mount_and_chown:
+#     sudo mkdir -p # (create mount point)
+#     sudo mount # (mount decrypted file system on mount point)
+#     sudo chown # (change ownership of mounted file system)
+#     sudo umount # (unmount)
+#
+# detach_loop_device:
+#     sudo losetup # (Detach luks mapping from loop device)
+#
+# close_luks_mapping
+#     sudo cryptsetup luksClose # (Close mapping & wipe key from memory)
+#     sudo losetup -d  # (Detach luks volume from loop device)
+#
+# make_cmtab_entry:
+#     (cat ... ) | sudo tee -a /etc/cryptmount/cmtab 
+#
+# do_cryptmount:
+#     sudo cryptmount # (Mount using cryptmount)
+#
+# do_cryptunmount:
+#     sudo cryptmount -u  # (Unmount using cryptmount)
+#
+# For luks partition, a couple of the above steps are skipped
+# as a loop device need not be set up (and removed) for the luks volume 
+################################################################
+
+##################                      ######################
+######### Edit the lines below and then run the script #######
+##################                      ######################
+
+# uncomment one of the following lines (type=partition/volume)
+# type=partition                     # create a luks partition
+# type=file                          # create a luks volume
+
+# If type=partition, uncomment and modify the following lines
+# Partition parameters 
+# mypartition=/dev/sdxx              # modify suitably
+
+# If type=file, uncomment and modify the following lines
+# File parameters
+# myvol=/PATH/TO/LUKS-VOLUME-FILE    # modify suitably
+# volGB=500                          # modify suitably
+
+# Following parameters required for both partition and file
+# mount location for decrypted file system
+where=/PATH/TO/MOUNT/POINT           # modify suitably
+# label for the filesystem that will be created
+label=MY_FILE_SYSTEM_LABEL           # modify suitably
+# user to whom mount location will be chowned
+owner=MY_USER_NAME                   # modify suitably
+
+# Optional name of the cryptmount target in cmtab file
+target=MY_TARGET_NAME                # modify suitably
+
+# if /dev/loop5 and/or /dev/loop6 are in use, use different devices
+# loop5 and loop6 are loop devices
+# loop6 is for luks mapping (needed for both partitions and volumes)
+# loop5 is to mount volume file (needed only for luks volumes)
+# Uncomment and change following lines only if necessary
+# loop6=/dev/loop6  # uncomment and change this if /dev/loop6 is in use
+# loop5=/dev/loop5  # uncomment and change this if /dev/loop5 is in use
+
+# if /dev/mapper/myMapper is is use, use a different name
+# mappername=myMapper  # uncomment/change if /dev/mapper/myMapper in use
+
+# We now source luks-make-run. This runs all commands in that file
+. luks-make-run
+

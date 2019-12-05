@@ -1,0 +1,142 @@
+#!/bin/bash
+
+## functions called from luks-make-generic which sources this file
+
+function confirm {
+    read -p "Y or y to continue "
+    echo    # (optional) move to a new line
+    if [[ $REPLY =~ ^[Yy]$ ]]
+    then
+        echo "****** Starting $1  ******"
+        eval $1
+        echo -e "****** Finished $1 ******\n"
+    else
+        exit
+    fi
+    # read -p "About to run $1. Press enter to continue: "
+}
+
+function setParams {
+    [[ "$type" == "" ]] && echo "Type not specified. Exiting" && exit
+    [[ "$type" == "partition" ]] && [[ "$mypartition" == "" ]]  \
+        && echo "Partition not specified. Exiting" && exit
+    [[ "$type" == "file" ]] && [[ "$myvol" == "" ]]  \
+        && echo "Volume file not specified. Exiting" && exit
+    [[ "$type" == "file" ]] && [[ "$volGB" == "" ]]  \
+        && echo "Volume size not specified. Exiting" && exit
+    [[ "$where" == "" ]] && echo "mount location not specified. Exiting" \
+        && exit
+    [[ "$label" == "" ]] && echo "file system label not specified. Exiting" \
+        && exit
+    [[ "$owner" == "" ]] && echo "file system owner not specified. Exiting" \
+        && exit
+    [[ "$target" == "" ]] \
+        && echo "No entry will be created in cmtab (target not specified)"
+    [[ "$loop6" == "" ]] && loop6=/dev/loop6 
+    [[ "$type" == "file" ]] && [[ "$loop5" == "" ]] && loop5=/dev/loop5
+    [[ "$mappername" == "" ]] && mappername=myMapper
+    mapper=/dev/mapper/$mappername
+    [[ "$type" == "partition" ]] && device=$mypartition
+    [[ "$type" == "partition" ]] && cryptdev=$device # for cmtab entry
+    [[ "$type" == "file" ]] && volume=$myvol
+    [[ "$type" == "file" ]] && cryptdev=$volume # for cmtab entry
+    [[ "$type" == "file" ]] && device=$loop5
+    [[ "$type" == "file" ]] && nGB=$volGB
+    [[ "$type" == "file" ]] && nMB=$((nGB*1024))
+    if [[ "$type" == "file" ]]; then
+        echo "$nMB MB luks volume will be created in file $volume"
+    else
+        echo "Luks partition will be set up on $device"
+    fi
+}
+
+
+function create_volfile {
+    echo "Creating file $volume"
+    [[ "$type" == "file" ]] && sudo dd if=/dev/zero of=$volume bs=1M count=0 seek=$nMB
+}
+
+function do_losetup_on_volfile {
+    echo "Associating loop device $device with file $volume"
+    [[ "$type" == "file" ]] && sudo losetup $device $volume
+}
+
+function set_passphrase {
+    echo "Initializing and setting passphrase for $device"
+    sudo cryptsetup luksFormat $device
+}
+
+function setup_mapping {
+    echo "luksOpening $device (prompting for password) and setting up mapping"
+    sudo cryptsetup luksOpen $device $mappername
+}
+
+function make_filesystem {
+    echo "Setting up loop device for the mapping created by luksOpen"
+    sudo losetup $loop6 $mapper
+    echo Creating file system # (mkfs.ext4, mkfs.ext3 or mkntfs)
+    sudo mkfs.ext4 $loop6
+    echo Creating label # (e2label or ntfslabel)
+    sudo e2label  $loop6 $label
+}
+
+function mount_and_chown {
+    echo "Creating mount location if required"
+    [ -e $where ] || sudo mkdir -p $where
+    echo Mounting file system
+    sudo mount $loop6 $where
+    echo Changing filesystem owner
+    sudo chown $owner:$owner $where
+    echo Unmounting file system
+    sudo umount $where
+}
+
+function detach_loop_device {
+    echo "Detaching luks mapping from loop device"
+    sudo losetup -d $loop6
+}
+
+function close_luks_mapping {
+    echo "Removing the luks mapping and wiping key from kernel memory"
+    sudo cryptsetup luksClose $mappername
+    [[ "$type" == "file" ]] && echo Detaching luks volume from loop device
+    [[ "$type" == "file" ]] && sudo losetup -d $device
+}
+
+function make_cmtab_entry {
+    echo "Creating entry in cmtab for cryptmount"
+    ## cryptdev is the partition if we are encrypting the partition. It is
+    ## the volume file if we are creating an encrypted volume
+    (cat  << INPUT
+$target {
+keyformat=luks
+dev=$cryptdev
+dir=$where
+}
+INPUT
+    ) | sudo tee -a /etc/cryptmount/cmtab
+}
+
+function do_cryptmount {
+    echo "Mounting using cryptmount (via cmtab entry) "
+    ## Note no sudo here
+    sudo cryptmount $target
+}
+
+function do_cryptunmount {
+    echo "Unmounting using cryptmount (via cmtab entry)"
+    sudo cryptmount -u $target
+}
+
+setParams
+[[ "$type" == "file" ]] && confirm create_volfile
+[[ "$type" == "file" ]] && confirm do_losetup_on_volfile
+confirm set_passphrase
+confirm setup_mapping
+confirm make_filesystem
+confirm mount_and_chown
+confirm detach_loop_device
+confirm close_luks_mapping
+[[ "$target" == "" ]] || confirm make_cmtab_entry
+[[ "$target" == "" ]] || confirm do_cryptmount
+[[ "$target" == "" ]] || confirm do_cryptunmount
